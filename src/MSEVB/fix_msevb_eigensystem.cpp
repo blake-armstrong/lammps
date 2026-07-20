@@ -317,144 +317,13 @@ void FixMSEVB::compute_excess_states()
       const int b_state = b_sk + 1;
 
       if (sites[b_sk].n_components > 0) {
-        for (int ci = 0; ci < sites[b_sk].n_components; ci++) {
-          // Couple this product to the state with component ci removed
-          // (neighbor_state[ci]) via component ci's transfer.
-          const int par_i = sites[b_sk].neighbor_state[ci];
-          const int comp_j = sites[b_sk].components[ci];
-          const ReactionDef &rxn_cpl = rxndefs[sites[comp_j].rxn_idx];
-
-          if (rxn_cpl.coupling_type == COUPLING_NONE) continue;
-
-          if (rxn_cpl.coupling_type == COUPLING_GRIMME2015) {
-            double V, g;
-            if (rxn_cpl.coupling_taper > 0.0) {
-              int gidx_H = atom->map(sites[comp_j].tag_H);
-              int gidx_Y = atom->map(sites[comp_j].tag_Y);
-              double tfH[3], tfY[3];
-              if (gidx_H >= 0 && gidx_Y >= 0)
-                Grimme2015::compute_scalar_tapered(
-                    rxn_cpl.coupling_a, rxn_cpl.coupling_b, hamiltonian[par_i * ns + par_i],
-                    hamiltonian[b_state * ns + b_state], atom->x[gidx_H], atom->x[gidx_Y], domain,
-                    rxn_cpl.coupling_taper, std::sqrt(rxn_cpl.cutoff_sq), V, g, tfH, tfY);
-              else
-                Grimme2015::compute_scalar(rxn_cpl.coupling_a, rxn_cpl.coupling_b,
-                                           hamiltonian[par_i * ns + par_i],
-                                           hamiltonian[b_state * ns + b_state], V, g);
-            } else {
-              Grimme2015::compute_scalar(rxn_cpl.coupling_a, rxn_cpl.coupling_b,
-                                         hamiltonian[par_i * ns + par_i],
-                                         hamiltonian[b_state * ns + b_state], V, g);
-            }
-            hamiltonian[par_i * ns + b_state] = V;
-            hamiltonian[b_state * ns + par_i] = V;
-          } else {
-            int idx_H = atom->map(sites[comp_j].tag_H);
-            int idx_X = atom->map(sites[comp_j].tag_X);
-            int idx_Y = atom->map(sites[comp_j].tag_Y);
-
-            if (idx_H >= 0 && idx_X >= 0 && idx_Y >= 0) {
-              double **x = atom->x;
-              double V, fH[3], fX[3], fY[3];
-              double cutoff = std::sqrt(rxn_cpl.cutoff_sq);
-
-              if (rxn_cpl.coupling_type == COUPLING_RAITERI2011) {
-                if (rxn_cpl.coupling_taper > 0.0)
-                  Raiteri2011::compute_tapered(rxn_cpl.coupling_lambda, rxn_cpl.coupling_zeta,
-                                               x[idx_H], x[idx_X], x[idx_Y], domain,
-                                               rxn_cpl.coupling_taper, cutoff, V, fH, fX, fY);
-                else
-                  Raiteri2011::compute(rxn_cpl.coupling_lambda, rxn_cpl.coupling_zeta, x[idx_H],
-                                       x[idx_X], x[idx_Y], domain, V, fH, fX, fY);
-              } else {
-                if (rxn_cpl.coupling_taper > 0.0)
-                  Vuilleumier1998::compute_tapered(rxn_cpl.coupling_v12, rxn_cpl.coupling_alpha,
-                                                   rxn_cpl.coupling_gamma_v, x[idx_H], x[idx_X],
-                                                   x[idx_Y], domain, rxn_cpl.coupling_taper, cutoff,
-                                                   V, fH, fX, fY);
-                else
-                  Vuilleumier1998::compute(rxn_cpl.coupling_v12, rxn_cpl.coupling_alpha,
-                                           rxn_cpl.coupling_gamma_v, x[idx_H], x[idx_X], x[idx_Y],
-                                           domain, V, fH, fX, fY);
-              }
-
-              if (comm->me == 0) {
-                hamiltonian[par_i * ns + b_state] = V;
-                hamiltonian[b_state * ns + par_i] = V;
-              }
-              MPI_Allreduce(MPI_IN_PLACE, &hamiltonian[par_i * ns + b_state], 1, MPI_DOUBLE,
-                            MPI_SUM, world);
-              hamiltonian[b_state * ns + par_i] = hamiltonian[par_i * ns + b_state];
-            }
-          }
-        }
+        // Couple this product to each state with one component removed
+        // (neighbor_state[ci]) via that component's transfer coupling.
+        for (int ci = 0; ci < sites[b_sk].n_components; ci++)
+          fill_coupling_edge(sites[b_sk].neighbor_state[ci], b_state,
+                             sites[sites[b_sk].components[ci]]);
       } else {
-        const int parent = sites[b_sk].parent_state;
-        const ReactionDef &rxn_cpl = rxndefs[sites[b_sk].rxn_idx];
-
-        if (rxn_cpl.coupling_type == COUPLING_NONE) continue;
-
-        if (rxn_cpl.coupling_type == COUPLING_GRIMME2015) {
-          double V, g;
-          if (rxn_cpl.coupling_taper > 0.0) {
-            int gidx_H = atom->map(sites[b_sk].tag_H);
-            int gidx_Y = atom->map(sites[b_sk].tag_Y);
-            double tfH[3], tfY[3];
-            if (gidx_H >= 0 && gidx_Y >= 0)
-              Grimme2015::compute_scalar_tapered(
-                  rxn_cpl.coupling_a, rxn_cpl.coupling_b, hamiltonian[parent * ns + parent],
-                  hamiltonian[b_state * ns + b_state], atom->x[gidx_H], atom->x[gidx_Y], domain,
-                  rxn_cpl.coupling_taper, std::sqrt(rxn_cpl.cutoff_sq), V, g, tfH, tfY);
-            else
-              Grimme2015::compute_scalar(rxn_cpl.coupling_a, rxn_cpl.coupling_b,
-                                         hamiltonian[parent * ns + parent],
-                                         hamiltonian[b_state * ns + b_state], V, g);
-          } else {
-            Grimme2015::compute_scalar(rxn_cpl.coupling_a, rxn_cpl.coupling_b,
-                                       hamiltonian[parent * ns + parent],
-                                       hamiltonian[b_state * ns + b_state], V, g);
-          }
-          hamiltonian[parent * ns + b_state] = V;
-          hamiltonian[b_state * ns + parent] = V;
-        } else {
-          int idx_H = atom->map(sites[b_sk].tag_H);
-          int idx_X = atom->map(sites[b_sk].tag_X);
-          int idx_Y = atom->map(sites[b_sk].tag_Y);
-
-          if (idx_H >= 0 && idx_X >= 0 && idx_Y >= 0) {
-            double **x = atom->x;
-            double V, fH[3], fX[3], fY[3];
-            double cutoff = std::sqrt(rxn_cpl.cutoff_sq);
-
-            if (rxn_cpl.coupling_type == COUPLING_RAITERI2011) {
-              if (rxn_cpl.coupling_taper > 0.0)
-                Raiteri2011::compute_tapered(rxn_cpl.coupling_lambda, rxn_cpl.coupling_zeta,
-                                             x[idx_H], x[idx_X], x[idx_Y], domain,
-                                             rxn_cpl.coupling_taper, cutoff, V, fH, fX, fY);
-              else
-                Raiteri2011::compute(rxn_cpl.coupling_lambda, rxn_cpl.coupling_zeta, x[idx_H],
-                                     x[idx_X], x[idx_Y], domain, V, fH, fX, fY);
-            } else {
-              if (rxn_cpl.coupling_taper > 0.0)
-                Vuilleumier1998::compute_tapered(rxn_cpl.coupling_v12, rxn_cpl.coupling_alpha,
-                                                 rxn_cpl.coupling_gamma_v, x[idx_H], x[idx_X],
-                                                 x[idx_Y], domain, rxn_cpl.coupling_taper, cutoff,
-                                                 V, fH, fX, fY);
-              else
-                Vuilleumier1998::compute(rxn_cpl.coupling_v12, rxn_cpl.coupling_alpha,
-                                         rxn_cpl.coupling_gamma_v, x[idx_H], x[idx_X], x[idx_Y],
-                                         domain, V, fH, fX, fY);
-            }
-
-            if (comm->me == 0) {
-              hamiltonian[parent * ns + b_state] = V;
-              hamiltonian[b_state * ns + parent] = V;
-            }
-            MPI_Allreduce(MPI_IN_PLACE, &hamiltonian[parent * ns + b_state], 1, MPI_DOUBLE, MPI_SUM,
-                          world);
-            hamiltonian[b_state * ns + parent] = hamiltonian[parent * ns + b_state];
-          }
-        }
+        fill_coupling_edge(sites[b_sk].parent_state, b_state, sites[b_sk]);
       }
     }
   }    // end batch loop
@@ -661,144 +530,13 @@ void FixMSEVB::compute_excess_energies()
       const int b_state = b_sk + 1;
 
       if (sites[b_sk].n_components > 0) {
-        for (int ci = 0; ci < sites[b_sk].n_components; ci++) {
-          // Couple this product to the state with component ci removed
-          // (neighbor_state[ci]) via component ci's transfer.
-          const int par_i = sites[b_sk].neighbor_state[ci];
-          const int comp_j = sites[b_sk].components[ci];
-          const ReactionDef &rxn_cpl = rxndefs[sites[comp_j].rxn_idx];
-
-          if (rxn_cpl.coupling_type == COUPLING_NONE) continue;
-
-          if (rxn_cpl.coupling_type == COUPLING_GRIMME2015) {
-            double V, g;
-            if (rxn_cpl.coupling_taper > 0.0) {
-              int gidx_H = atom->map(sites[comp_j].tag_H);
-              int gidx_Y = atom->map(sites[comp_j].tag_Y);
-              double tfH[3], tfY[3];
-              if (gidx_H >= 0 && gidx_Y >= 0)
-                Grimme2015::compute_scalar_tapered(
-                    rxn_cpl.coupling_a, rxn_cpl.coupling_b, hamiltonian[par_i * ns + par_i],
-                    hamiltonian[b_state * ns + b_state], atom->x[gidx_H], atom->x[gidx_Y], domain,
-                    rxn_cpl.coupling_taper, std::sqrt(rxn_cpl.cutoff_sq), V, g, tfH, tfY);
-              else
-                Grimme2015::compute_scalar(rxn_cpl.coupling_a, rxn_cpl.coupling_b,
-                                           hamiltonian[par_i * ns + par_i],
-                                           hamiltonian[b_state * ns + b_state], V, g);
-            } else {
-              Grimme2015::compute_scalar(rxn_cpl.coupling_a, rxn_cpl.coupling_b,
-                                         hamiltonian[par_i * ns + par_i],
-                                         hamiltonian[b_state * ns + b_state], V, g);
-            }
-            hamiltonian[par_i * ns + b_state] = V;
-            hamiltonian[b_state * ns + par_i] = V;
-          } else {
-            int idx_H = atom->map(sites[comp_j].tag_H);
-            int idx_X = atom->map(sites[comp_j].tag_X);
-            int idx_Y = atom->map(sites[comp_j].tag_Y);
-
-            if (idx_H >= 0 && idx_X >= 0 && idx_Y >= 0) {
-              double **x = atom->x;
-              double V, fH[3], fX[3], fY[3];
-              double cutoff = std::sqrt(rxn_cpl.cutoff_sq);
-
-              if (rxn_cpl.coupling_type == COUPLING_RAITERI2011) {
-                if (rxn_cpl.coupling_taper > 0.0)
-                  Raiteri2011::compute_tapered(rxn_cpl.coupling_lambda, rxn_cpl.coupling_zeta,
-                                               x[idx_H], x[idx_X], x[idx_Y], domain,
-                                               rxn_cpl.coupling_taper, cutoff, V, fH, fX, fY);
-                else
-                  Raiteri2011::compute(rxn_cpl.coupling_lambda, rxn_cpl.coupling_zeta, x[idx_H],
-                                       x[idx_X], x[idx_Y], domain, V, fH, fX, fY);
-              } else {
-                if (rxn_cpl.coupling_taper > 0.0)
-                  Vuilleumier1998::compute_tapered(rxn_cpl.coupling_v12, rxn_cpl.coupling_alpha,
-                                                   rxn_cpl.coupling_gamma_v, x[idx_H], x[idx_X],
-                                                   x[idx_Y], domain, rxn_cpl.coupling_taper, cutoff,
-                                                   V, fH, fX, fY);
-                else
-                  Vuilleumier1998::compute(rxn_cpl.coupling_v12, rxn_cpl.coupling_alpha,
-                                           rxn_cpl.coupling_gamma_v, x[idx_H], x[idx_X], x[idx_Y],
-                                           domain, V, fH, fX, fY);
-              }
-
-              if (comm->me == 0) {
-                hamiltonian[par_i * ns + b_state] = V;
-                hamiltonian[b_state * ns + par_i] = V;
-              }
-              MPI_Allreduce(MPI_IN_PLACE, &hamiltonian[par_i * ns + b_state], 1, MPI_DOUBLE,
-                            MPI_SUM, world);
-              hamiltonian[b_state * ns + par_i] = hamiltonian[par_i * ns + b_state];
-            }
-          }
-        }
+        // Couple this product to each state with one component removed
+        // (neighbor_state[ci]) via that component's transfer coupling.
+        for (int ci = 0; ci < sites[b_sk].n_components; ci++)
+          fill_coupling_edge(sites[b_sk].neighbor_state[ci], b_state,
+                             sites[sites[b_sk].components[ci]]);
       } else {
-        const int parent = sites[b_sk].parent_state;
-        const ReactionDef &rxn_cpl = rxndefs[sites[b_sk].rxn_idx];
-
-        if (rxn_cpl.coupling_type == COUPLING_NONE) continue;
-
-        if (rxn_cpl.coupling_type == COUPLING_GRIMME2015) {
-          double V, g;
-          if (rxn_cpl.coupling_taper > 0.0) {
-            int gidx_H = atom->map(sites[b_sk].tag_H);
-            int gidx_Y = atom->map(sites[b_sk].tag_Y);
-            double tfH[3], tfY[3];
-            if (gidx_H >= 0 && gidx_Y >= 0)
-              Grimme2015::compute_scalar_tapered(
-                  rxn_cpl.coupling_a, rxn_cpl.coupling_b, hamiltonian[parent * ns + parent],
-                  hamiltonian[b_state * ns + b_state], atom->x[gidx_H], atom->x[gidx_Y], domain,
-                  rxn_cpl.coupling_taper, std::sqrt(rxn_cpl.cutoff_sq), V, g, tfH, tfY);
-            else
-              Grimme2015::compute_scalar(rxn_cpl.coupling_a, rxn_cpl.coupling_b,
-                                         hamiltonian[parent * ns + parent],
-                                         hamiltonian[b_state * ns + b_state], V, g);
-          } else {
-            Grimme2015::compute_scalar(rxn_cpl.coupling_a, rxn_cpl.coupling_b,
-                                       hamiltonian[parent * ns + parent],
-                                       hamiltonian[b_state * ns + b_state], V, g);
-          }
-          hamiltonian[parent * ns + b_state] = V;
-          hamiltonian[b_state * ns + parent] = V;
-        } else {
-          int idx_H = atom->map(sites[b_sk].tag_H);
-          int idx_X = atom->map(sites[b_sk].tag_X);
-          int idx_Y = atom->map(sites[b_sk].tag_Y);
-
-          if (idx_H >= 0 && idx_X >= 0 && idx_Y >= 0) {
-            double **x = atom->x;
-            double V, fH[3], fX[3], fY[3];
-            double cutoff = std::sqrt(rxn_cpl.cutoff_sq);
-
-            if (rxn_cpl.coupling_type == COUPLING_RAITERI2011) {
-              if (rxn_cpl.coupling_taper > 0.0)
-                Raiteri2011::compute_tapered(rxn_cpl.coupling_lambda, rxn_cpl.coupling_zeta,
-                                             x[idx_H], x[idx_X], x[idx_Y], domain,
-                                             rxn_cpl.coupling_taper, cutoff, V, fH, fX, fY);
-              else
-                Raiteri2011::compute(rxn_cpl.coupling_lambda, rxn_cpl.coupling_zeta, x[idx_H],
-                                     x[idx_X], x[idx_Y], domain, V, fH, fX, fY);
-            } else {
-              if (rxn_cpl.coupling_taper > 0.0)
-                Vuilleumier1998::compute_tapered(rxn_cpl.coupling_v12, rxn_cpl.coupling_alpha,
-                                                 rxn_cpl.coupling_gamma_v, x[idx_H], x[idx_X],
-                                                 x[idx_Y], domain, rxn_cpl.coupling_taper, cutoff,
-                                                 V, fH, fX, fY);
-              else
-                Vuilleumier1998::compute(rxn_cpl.coupling_v12, rxn_cpl.coupling_alpha,
-                                         rxn_cpl.coupling_gamma_v, x[idx_H], x[idx_X], x[idx_Y],
-                                         domain, V, fH, fX, fY);
-            }
-
-            if (comm->me == 0) {
-              hamiltonian[parent * ns + b_state] = V;
-              hamiltonian[b_state * ns + parent] = V;
-            }
-            MPI_Allreduce(MPI_IN_PLACE, &hamiltonian[parent * ns + b_state], 1, MPI_DOUBLE, MPI_SUM,
-                          world);
-            hamiltonian[b_state * ns + parent] = hamiltonian[parent * ns + b_state];
-          }
-        }
+        fill_coupling_edge(sites[b_sk].parent_state, b_state, sites[b_sk]);
       }
     }
   }    // end batch loop
@@ -1078,7 +816,43 @@ FixMSEVB::CouplingResult FixMSEVB::evaluate_coupling(const ReactionDef &rxn, dou
       break;
   }
 
+  // Returns the TRUE (unscaled) coupling.  coupling_scale (lambda) is applied
+  // when the working Hamiltonian and forces are constructed from this value
+  // (solve_eigensystem / compute_mixing_weights), so the true value stays
+  // available for FEP re-evaluation at other lambda_k.
   return cr;
+}
+
+/* ----------------------------------------------------------------------
+   Fill the (parent,child) off-diagonal Hamiltonian element from the coupling
+   of `site`.  Single source used by the parallel (compute_coupling_values) and
+   excess-state coupling paths, so every off-diagonal flows through
+   evaluate_coupling().  For Grimme all ranks compute identically from synced
+   energies; for position-based coupling only the owning rank contributes and
+   the value is summed over the partition (world).
+---------------------------------------------------------------------- */
+
+void FixMSEVB::fill_coupling_edge(int parent, int child, const ReactiveSite &site)
+{
+  const int ns = nstates;
+  const ReactionDef &rxn = rxndefs[site.rxn_idx];
+  if (rxn.coupling_type == COUPLING_NONE) return;
+
+  auto cr =
+      evaluate_coupling(rxn, hamiltonian[parent * ns + parent], hamiltonian[child * ns + child],
+                        site.tag_H, site.tag_X, site.tag_Y);
+
+  if (cr.is_grimme) {
+    hamiltonian[parent * ns + child] = cr.V;
+    hamiltonian[child * ns + parent] = cr.V;
+  } else if (cr.valid) {
+    if (comm->me == 0) {
+      hamiltonian[parent * ns + child] = cr.V;
+      hamiltonian[child * ns + parent] = cr.V;
+    }
+    MPI_Allreduce(MPI_IN_PLACE, &hamiltonian[parent * ns + child], 1, MPI_DOUBLE, MPI_SUM, world);
+    hamiltonian[child * ns + parent] = hamiltonian[parent * ns + child];
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -1093,30 +867,6 @@ void FixMSEVB::compute_coupling_values()
 
   const int ns = nstates;
 
-  // Helper lambda: process one coupling edge, fill hamiltonian
-  auto fill_hamiltonian_edge = [&](int parent, int child, const ReactiveSite &site) {
-    const ReactionDef &rxn = rxndefs[site.rxn_idx];
-    if (rxn.coupling_type == COUPLING_NONE) return;
-
-    auto cr =
-        evaluate_coupling(rxn, hamiltonian[parent * ns + parent], hamiltonian[child * ns + child],
-                          site.tag_H, site.tag_X, site.tag_Y);
-
-    if (cr.is_grimme) {
-      // Grimme: all ranks compute identically from synced energies
-      hamiltonian[parent * ns + child] = cr.V;
-      hamiltonian[child * ns + parent] = cr.V;
-    } else if (cr.valid) {
-      // Position-based: rank 0 contributes, Allreduce sums
-      if (comm->me == 0) {
-        hamiltonian[parent * ns + child] = cr.V;
-        hamiltonian[child * ns + parent] = cr.V;
-      }
-      MPI_Allreduce(MPI_IN_PLACE, &hamiltonian[parent * ns + child], 1, MPI_DOUBLE, MPI_SUM, world);
-      hamiltonian[child * ns + parent] = hamiltonian[parent * ns + child];
-    }
-  };
-
   for (int k = 0; k < nsites_parallel; k++) {
     int state_k = k + 1;
     if (sites[k].n_components > 0) {
@@ -1125,10 +875,10 @@ void FixMSEVB::compute_coupling_values()
       // and the edge carries component j's transfer coupling.  For a 2-way
       // product this is exactly the two single-component edges.
       for (int j = 0; j < sites[k].n_components; j++) {
-        fill_hamiltonian_edge(sites[k].neighbor_state[j], state_k, sites[sites[k].components[j]]);
+        fill_coupling_edge(sites[k].neighbor_state[j], state_k, sites[sites[k].components[j]]);
       }
     } else {
-      fill_hamiltonian_edge(sites[k].parent_state, state_k, sites[k]);
+      fill_coupling_edge(sites[k].parent_state, state_k, sites[k]);
     }
   }
 
@@ -1162,8 +912,14 @@ void FixMSEVB::solve_eigensystem()
 {
   const int ns = nstates;
 
+  // hamiltonian[] holds the TRUE coupling in its off-diagonals; the working
+  // matrix scales them by coupling_scale (lambda).  Diagonals (state energies)
+  // are never scaled.  FEP re-evaluation temporarily sets coupling_scale to a
+  // window value and re-enters here.
   for (int i = 0; i < ns; i++)
-    for (int j = 0; j < ns; j++) H_work[i * ns + j] = hamiltonian[i * ns + j];
+    for (int j = 0; j < ns; j++)
+      H_work[i * ns + j] =
+          (i == j) ? hamiltonian[i * ns + j] : coupling_scale * hamiltonian[i * ns + j];
 
   for (int i = 0; i < ns; i++) {
     eigenvalues[i] = 0.0;
@@ -1178,6 +934,61 @@ void FixMSEVB::solve_eigensystem()
   epot_ground = eigenvalues[0];
 
   for (int i = 0; i < ns; i++) amplitudes[i] = eigenvectors[i * ns + 0] * eigenvectors[i * ns + 0];
+}
+
+/* ----------------------------------------------------------------------
+   FD-aware EVB energy from the current member eigenvalues: the Fermi-Dirac
+   occupancy-weighted sum when smearing is on, otherwise the ground eigenvalue.
+   Shared by compute_mixing_weights() and evaluate_fep_energies() so the energy
+   definition cannot diverge.  Uses a local occupancy buffer (member fd_occ is
+   left untouched).
+---------------------------------------------------------------------- */
+
+double FixMSEVB::evb_energy_from_eigenvalues()
+{
+  const int ns = nstates;
+  if (fermi_dirac_enabled && ns > 1) {
+    std::vector<double> occ(ns);
+    fermi_dirac_occupancies(eigenvalues, ns, occ.data());
+    double U = 0.0;
+    for (int k = 0; k < ns; k++) U += occ[k] * eigenvalues[k];
+    return U;
+  }
+  return eigenvalues[0];
+}
+
+/* ----------------------------------------------------------------------
+   FEP: for each fep_lambdas window, temporarily set coupling_scale and re-solve
+   (reusing solve_eigensystem, which builds the Hamiltonian from the stored TRUE
+   coupling scaled by coupling_scale), then read the energy with the same
+   definition as the reported PE.  The live eigensystem (used by the permanent
+   transfer) is saved and restored.  Runs on all ranks: solve_eigensystem and
+   fermi_dirac_occupancies can enter collective error paths.
+---------------------------------------------------------------------- */
+
+void FixMSEVB::evaluate_fep_energies()
+{
+  const int ns = nstates;
+  if (ns <= 0 || fep_lambdas.empty()) return;
+
+  const double saved_scale = coupling_scale;
+  const double saved_epot = epot_ground;
+  std::vector<double> saved_evals(eigenvalues, eigenvalues + ns);
+  std::vector<double> saved_evecs(eigenvectors, eigenvectors + (size_t) ns * ns);
+  std::vector<double> saved_amps(amplitudes, amplitudes + ns);
+
+  fep_energies.resize(fep_lambdas.size());
+  for (size_t k = 0; k < fep_lambdas.size(); k++) {
+    coupling_scale = fep_lambdas[k];
+    solve_eigensystem();
+    fep_energies[k] = evb_energy_from_eigenvalues();
+  }
+
+  coupling_scale = saved_scale;
+  epot_ground = saved_epot;
+  std::copy(saved_evals.begin(), saved_evals.end(), eigenvalues);
+  std::copy(saved_evecs.begin(), saved_evecs.end(), eigenvectors);
+  std::copy(saved_amps.begin(), saved_amps.end(), amplitudes);
 }
 
 /* ----------------------------------------------------------------------
@@ -1241,9 +1052,11 @@ void FixMSEVB::compute_mixing_weights()
         evaluate_coupling(rxn, hamiltonian[parent * ns + parent], hamiltonian[child * ns + child],
                           site.tag_H, site.tag_X, site.tag_Y);
 
-    // Grimme weight adjustment: -2*rho_pc*g to parent, +2*rho_pc*g to child
+    // Grimme weight adjustment: -2*rho_pc*g to parent, +2*rho_pc*g to child.
+    // cr holds the true coupling; scale the force by coupling_scale (lambda) to
+    // match the scaled off-diagonal Hamiltonian element (construct force = true*lambda).
     if (cr.is_grimme) {
-      double w_adj = 2.0 * rho_pc * cr.g;
+      double w_adj = 2.0 * coupling_scale * rho_pc * cr.g;
       weights[parent] -= w_adj;
       weights[child] += w_adj;
     }
@@ -1254,7 +1067,7 @@ void FixMSEVB::compute_mixing_weights()
       cc.tag_H = site.tag_H;
       cc.tag_X = site.tag_X;
       cc.tag_Y = site.tag_Y;
-      cc.rho_factor = 2.0 * rho_pc;
+      cc.rho_factor = 2.0 * coupling_scale * rho_pc;
       for (int d = 0; d < 3; d++) {
         cc.fH[d] = cr.fH[d];
         cc.fX[d] = cr.fX[d];

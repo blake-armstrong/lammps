@@ -53,6 +53,12 @@ Syntax
        re-evaluate EVB after each permanent transfer until convergence (default: no)
      *scf_max_iter* value = N
        N = maximum SCF iterations per timestep (default: 10)
+     *coupling_scale* value = lambda
+       lambda = factor multiplying every off-diagonal coupling (and its forces);
+                1.0 = normal MSEVB, 0.0 = no reactivity (default: 1.0)
+     *fep_lambdas* values = lambda1 lambda2 ... lambdaK
+       lambdaK = coupling-scale values at which the system energy is additionally
+                 evaluated (energy only) each output step, for FEP/MBAR reweighting
      *file* values = filename [every N]
        filename = path to a structured JSON output file
        *every* N = also write a record every N steps (optional; default: only
@@ -92,6 +98,18 @@ Examples
      reaction pre post react.map 3.5 &
      shells 1 fermi_dirac 300.0 scf_topology yes &
      file msevb.json every 1
+   fix_modify evb energy yes
+
+.. code-block:: LAMMPS
+
+   # FEP window: sample at coupling scale ${lam}, record energies at all windows
+   molecule pre  pre_h3o.mol
+   molecule post post_h3o.mol
+   fix evb all msevb &
+     reaction pre post react.map 2.5 taper 2.0 shells 2 coupling a 0.8 b 0.15 &
+     coupling_scale ${lam} &
+     fep_lambdas 0.0 0.25 0.5 0.75 1.0 &
+     file msevb.json every 100
    fix_modify evb energy yes
 
 Description
@@ -306,6 +324,42 @@ mixing are the diagonal elements of the density matrix
 This option is useful for systems with nearly degenerate states, such
 as polarons in transition-metal oxides, where the ground-state approximation
 can introduce discontinuities.
+
+----------
+
+Free energy of reactivity (coupling scaling / FEP)
+''''''''''''''''''''''''''''''''''''''''''''''''''
+
+The *coupling_scale* keyword multiplies every off-diagonal coupling
+:math:`C_{ij}` (and the corresponding forces) by a factor
+:math:`\lambda`, so the dynamics propagate on the scaled surface
+:math:`U(\lambda)`:
+
+.. math::
+
+   H(\lambda)_{ii} = E_i, \qquad H(\lambda)_{ij} = \lambda\, C_{ij}\ (i \neq j)
+
+At :math:`\lambda = 1` this is the normal fully-coupled MSEVB; at
+:math:`\lambda = 0` the Hamiltonian is diagonal, so there is no state
+mixing and no reactivity.  The free energy difference between
+:math:`\lambda = 0` and :math:`\lambda = 1` is therefore the free energy of
+*adding (or removing) reactivity*, and can be obtained by free energy
+perturbation (FEP) / multistate Bennett acceptance ratio (MBAR).
+
+The true (unscaled) couplings are stored internally, so the energy at any
+other :math:`\lambda_k` can be evaluated without re-computing the coupling.
+Listing values with *fep_lambdas* makes the fix, at every output step,
+re-diagonalize the Hamiltonian with the off-diagonals scaled by each
+:math:`\lambda_k` and record the resulting system energy
+:math:`U(\lambda_k)` (using the same energy definition as the running
+simulation, including Fermi-Dirac smearing if enabled).  These energies are
+written to the JSON output alongside the running *coupling_scale*.
+
+A typical MBAR workflow runs one simulation at each sampled
+*coupling_scale* value, all using the same *fep_lambdas* list, and combines
+the recorded :math:`U(\lambda_k)` from every run with MBAR to obtain
+:math:`\Delta G`.  Because :math:`\lambda` only scales the small dense
+off-diagonal block, evaluating every window is inexpensive.
 
 ----------
 

@@ -118,8 +118,8 @@ class FixMSEVB : public Fix {
         type_H(0), type_Y(0), type_X(-1), cutoff_sq(0.0), coupling_set(false),
         coupling_type(COUPLING_NONE), coupling_lambda(0.0), coupling_zeta(0.0), coupling_v12(0.0),
         coupling_alpha(0.0), coupling_gamma_v(0.0), coupling_a(0.0), coupling_b(0.0),
-        coupling_taper(0.0), shells(-1), pre_mol(nullptr), post_mol(nullptr),
-        glove_n(0), ibonding(-1), jbonding(-1), ix_bonding(-1)
+        coupling_taper(0.0), shells(-1), pre_mol(nullptr), post_mol(nullptr), glove_n(0),
+        ibonding(-1), jbonding(-1), ix_bonding(-1)
     {
     }
   };
@@ -207,6 +207,11 @@ class FixMSEVB : public Fix {
   CouplingResult evaluate_coupling(const ReactionDef &rxn, double E_parent, double E_child,
                                    tagint tag_H, tagint tag_X, tagint tag_Y);
 
+  // Fill the (parent,child) off-diagonal Hamiltonian element from the coupling
+  // of `site` (via evaluate_coupling).  Single source used by both the parallel
+  // (compute_coupling_values) and excess-state coupling paths.
+  void fill_coupling_edge(int parent, int child, const ReactiveSite &site);
+
   // ---- Excess state force storage (Approach A: save/restore) ----------
   double *saved_forces;             // [nmax*3] save/restore atom->f around excess eval
   double *excess_forces;            // [nsites_serial * ef_nmax * 3] per-excess-state forces
@@ -290,6 +295,26 @@ class FixMSEVB : public Fix {
   int fermi_dirac_enabled;
   double fd_temperature;
   double fd_RT;
+
+  // ---- Coupling scaling / FEP -----------------------------------------
+  // coupling_scale (lambda) is applied once to the value returned by
+  // evaluate_coupling(), so it multiplies every off-diagonal Hamiltonian
+  // element and the corresponding coupling forces.  lambda = 1 is the normal
+  // fully-coupled MSEVB; lambda = 0 is diagonal-only (no reactivity).  This
+  // lets the free energy of adding/removing reactivity be measured.
+  double coupling_scale;
+  // fep_lambdas: extra lambda values at which the system energy is evaluated
+  // (energy only) for MBAR reweighting.  fep_energies holds the most recent
+  // U(lambda_k) for each, filled by evaluate_fep_energies().
+  std::vector<double> fep_lambdas;
+  std::vector<double> fep_energies;
+  // FD-aware EVB energy from the current member eigenvalues: the Fermi-Dirac
+  // occupancy-weighted sum when smearing is on, else the ground eigenvalue.
+  // Shared by the main energy path and FEP so the definitions cannot diverge.
+  double evb_energy_from_eigenvalues();
+  // Re-solve at each fep_lambdas entry (reusing solve_eigensystem) and store the
+  // energies; saves/restores the member eigensystem so the live state is intact.
+  void evaluate_fep_energies();
 
   // ---- Reactive-atom group tracking -----------------------------------
   // A LAMMPS group named "<fix_id>_atoms" is created in init() and kept

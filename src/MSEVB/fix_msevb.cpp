@@ -85,7 +85,8 @@ FixMSEVB::FixMSEVB(LAMMPS *lmp, int narg, char **arg) :
     coupling_zeta(0.0), coupling_v12(0.0), coupling_alpha(0.0), coupling_gamma_v(0.0),
     coupling_a(0.0), coupling_b(0.0), coupling_taper(0.0), coupling_enabled(0),
     temp_compute(nullptr), press_compute(nullptr), enumerate_product_states(0),
-    fermi_dirac_enabled(0), fd_temperature(0.0), fd_RT(0.0), max_shells(1), file_flag(false),
+    fermi_dirac_enabled(0), fd_temperature(0.0), fd_RT(0.0), coupling_scale(1.0),
+    max_shells(1), file_flag(false),
     file_every(0), fpout(nullptr), json_init(0), reactive_group_bit(0), scf_topology(false),
     scf_max_iter(10), min_terminate(false), max_states(0)
 {
@@ -295,6 +296,22 @@ FixMSEVB::FixMSEVB(LAMMPS *lmp, int narg, char **arg) :
       fd_temperature = utils::numeric(FLERR, arg[iarg + 1], false, lmp);
       fermi_dirac_enabled = 1;
       iarg += 2;
+    } else if (strcmp(arg[iarg], "coupling_scale") == 0) {
+      if (iarg + 1 >= narg)
+        error->universe_all(FLERR, "Fix msevb: missing value for coupling_scale");
+      coupling_scale = utils::numeric(FLERR, arg[iarg + 1], false, lmp);
+      if (coupling_scale < 0.0)
+        error->universe_all(FLERR, "Fix msevb: coupling_scale must be >= 0");
+      iarg += 2;
+    } else if (strcmp(arg[iarg], "fep_lambdas") == 0) {
+      // Consume all following numeric tokens as evaluation lambdas.
+      iarg++;
+      while (iarg < narg && utils::is_double(arg[iarg])) {
+        fep_lambdas.push_back(utils::numeric(FLERR, arg[iarg], false, lmp));
+        iarg++;
+      }
+      if (fep_lambdas.empty())
+        error->universe_all(FLERR, "Fix msevb: fep_lambdas requires at least one value");
     } else if (strcmp(arg[iarg], "file") == 0) {
       if (iarg + 1 >= narg) error->universe_all(FLERR, "Fix msevb: file requires a filename");
       file_name = arg[iarg + 1];
@@ -1277,6 +1294,11 @@ void FixMSEVB::post_force(int vflag)
     if (nsites_serial > 0 && need_forces) apply_excess_forces();
   }
 
+  // FEP: re-evaluate the system energy at each reweighting window on the solved
+  // Hamiltonian (before the permanent transfer, which the save/restore protects).
+  // Runs on all ranks (collective error paths in the re-solve).
+  if (!fep_lambdas.empty()) evaluate_fep_energies();
+
   // --- Permanent transfer + optional SCF topology loop -----------------
   //
   // If scf_topology is enabled and a permanent transfer occurs, re-evaluate
@@ -1578,6 +1600,20 @@ void FixMSEVB::write_msevb_json(bigint timestep, int max_state, double max_amp)
   rec["nstates"] = ns;
   rec["nsites_parallel"] = nsites_parallel;
   rec["nsites_serial"] = nsites_serial;
+
+  // The lambda the dynamics ran at (scales all coupling / reactivity), and the
+  // FEP reweighting energies U(lambda_k) evaluated on this configuration for MBAR.
+  rec["coupling_scale"] = coupling_scale;
+  if (!fep_lambdas.empty()) {
+    json fep = json::array();
+    for (size_t k = 0; k < fep_lambdas.size(); k++) {
+      json e;
+      e["lambda"] = fep_lambdas[k];
+      e["energy"] = (k < fep_energies.size()) ? fep_energies[k] : 0.0;
+      fep.push_back(e);
+    }
+    rec["fep"] = fep;
+  }
 
   // Helper: build the transfer chain (one link per depth) of site `si`.
   auto build_chain = [&](int si) {

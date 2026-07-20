@@ -295,6 +295,7 @@ Bellott
 bem
 benchmarking
 Bennet
+Bennett
 Berardi
 Beraun
 Bereau
@@ -2370,6 +2371,7 @@ Maxwellian
 maxX
 Mayergoyz
 Mayoral
+MBAR
 mbt
 MBytes
 mbx
@@ -2606,6 +2608,7 @@ multiphysics
 Multipole
 multiscale
 multisectioning
+multistate
 multithreading
 Multithreading
 multivalent
@@ -3507,6 +3510,7 @@ reStructuredText
 Restrepo
 rethrowing
 Revenga
+reweighting
 rewrap
 rezwanur
 rfac
